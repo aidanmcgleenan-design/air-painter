@@ -1,0 +1,626 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Air Painter — gesture drawing with your hand</title>
+<style>
+  :root { --pad: 10px; --bg:#0e0e11; --panel:#17171c; --text:#e6e6eb; --muted:#9aa0a6; --accent:#63b3ff; }
+  html,body { margin:0; height:100%; background:var(--bg); color:var(--text); font-family: system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif; }
+  .app { display:grid; grid-template-columns: 320px 1fr; grid-template-rows: auto 1fr; gap: var(--pad); height:100%; }
+  header { grid-column: 1 / -1; padding: var(--pad) calc(var(--pad)*1.4); display:flex; align-items:center; gap:12px; border-bottom:1px solid #2a2a33; }
+  header h1 { font-size:16px; font-weight:600; margin:0; letter-spacing:0.4px; }
+  header .pill { font-size:12px; color:var(--muted); }
+  .left { background:var(--panel); padding: var(--pad); overflow:auto; }
+  .group { border:1px solid #2a2a33; border-radius:10px; padding:12px; margin-bottom:12px; }
+  .group h2 { font-size:13px; margin:0 0 8px 0; color:#c9ced6; letter-spacing:.3px; }
+  label { display:flex; align-items:center; justify-content:space-between; font-size:13px; margin:6px 0; gap:10px;}
+  input[type="range"] { width:150px; }
+  select, button, input[type="color"] {
+    background:#1f1f26; color:var(--text); border:1px solid #2a2a33; border-radius:8px; padding:8px 10px; font-size:13px;
+  }
+  button { cursor:pointer; }
+  button.primary { background:#1f2430; border-color:#2a3648; }
+  button.rec { background:#2b1a1a; border-color:#5b2a2a; }
+  .camWrap { position:relative; background:#000; border:1px solid #2a2a33; border-radius:12px; overflow:hidden; margin-right:var(--pad); }
+  #video { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; display:none; } /* toggled via JS */
+  #composite { position:absolute; inset:0; width:100%; height:100%; }
+  #draw { position:absolute; inset:0; width:100%; height:100%; }
+  #guide { position:absolute; inset:0; pointer-events:none; opacity:.2; display:none; }
+  .badgelive { font-size:11px; color:#9ce6a9; margin-left:auto; }
+  .row { display:flex; gap:8px; flex-wrap:wrap; }
+  .hint { font-size:12px; color:var(--muted); margin-top:6px; }
+  .kbd { background:#2a2a33; padding:2px 6px; border-radius:6px; font-size:12px; border:1px solid #3a3a44; }
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <h1>Air Painter</h1>
+    <span class="pill">Pinch your index and thumb to draw • Release to stop</span>
+    <span id="status" class="badgelive">loading models…</span>
+  </header>
+
+  <div class="left">
+    <div class="group">
+      <h2>Session</h2>
+      <div class="row">
+        <button id="startCam" class="primary">Start Camera</button>
+        <button id="clear">Clear</button>
+        <button id="undo">Undo</button>
+        <button id="redo">Redo</button>
+      </div>
+      <div class="hint">Hotkeys: <span class="kbd">C</span> clear • <span class="kbd">Z</span>/<span class="kbd">Y</span> undo/redo • <span class="kbd">H</span> hide video • <span class="kbd">Space</span> toggle draw</div>
+    </div>
+
+    <div class="group">
+      <h2>Brush</h2>
+      <label>Tool
+        <select id="brush">
+          <option value="pen">Pen</option>
+          <option value="calligraphy">Calligraphy</option>
+          <option value="spray">Spray</option>
+          <option value="water">Watercolor-ish</option>
+          <option value="sparkle">Sparkles</option>
+        </select>
+      </label>
+      <label>Color <input id="color" type="color" value="#63b3ff" /></label>
+      <label>Size <input id="size" type="range" min="1" max="40" value="8" /></label>
+      <label>Opacity <input id="alpha" type="range" min="0.05" max="1" step="0.05" value="1" /></label>
+      <label>Speed→Thickness <input id="speedScale" type="range" min="0" max="2" step="0.05" value="1" /></label>
+      <label>Draw with
+        <select id="cursorPoint">
+          <option value="index">Index fingertip</option>
+          <option value="wrist">Wrist</option>
+          <option value="thumb">Thumb tip</option>
+        </select>
+      </label>
+      <label>Gesture mode
+        <select id="gestureMode">
+          <option value="pinch">Pinch to draw</option>
+          <option value="always">Always draw (use Space)</option>
+        </select>
+      </label>
+    </div>
+
+    <div class="group">
+      <h2>Canvas / Background</h2>
+      <label>Background
+        <select id="bgMode">
+          <option value="white">White</option>
+          <option value="camera">Live camera</option>
+          <option value="solid">Solid color</option>
+          <option value="transparent">Transparent (for PNG export)</option>
+        </select>
+      </label>
+      <label>Solid color <input id="bgColor" type="color" value="#101418" /></label>
+      <label>Show guide
+        <select id="guideShape">
+          <option value="none">None</option>
+          <option value="circle">Circle</option>
+          <option value="square">Square</option>
+          <option value="star">Star</option>
+          <option value="letterA">Letter A</option>
+        </select>
+      </label>
+      <label>Guide size <input id="guideSize" type="range" min="50" max="800" value="300" /></label>
+    </div>
+
+    <div class="group">
+      <h2>Record & Export</h2>
+      <div class="row">
+        <button id="rec" class="rec">Start Recording</button>
+        <button id="snap">Export PNG</button>
+      </div>
+      <label>Include camera in recording?
+        <select id="recordWithCamera">
+          <option value="yes">Yes</option>
+          <option value="no">No (strokes only)</option>
+        </select>
+      </label>
+      <div class="hint">Recording saves a WebM. For a timelapse effect, change playback speed in your video editor/player.</div>
+    </div>
+
+    <div class="group">
+      <h2>Accessibility & Extras</h2>
+      <label>Pointer smoothing <input id="smooth" type="range" min="0" max="0.9" step="0.05" value="0.3" /></label>
+      <label>Pinch sensitivity <input id="pinch" type="range" min="0.02" max="0.1" step="0.005" value="0.045" /></label>
+      <div class="hint">Bigger smoothing = steadier lines; larger pinch threshold = harder to trigger drawing.</div>
+    </div>
+
+    <div class="group">
+      <h2>About</h2>
+      <div class="hint">Built with MediaPipe Hands in your browser. No uploads. Your video stays local.</div>
+    </div>
+  </div>
+
+  <div class="camWrap">
+    <video id="video" playsinline></video>
+    <canvas id="composite"></canvas>
+    <canvas id="draw"></canvas>
+    <canvas id="guide"></canvas>
+  </div>
+</div>
+
+<!-- MediaPipe Hands (Tasks API) -->
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs" type="module"></script>
+<script type="module">
+  import { FilesetResolver, HandLandmarker, DrawingUtils } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs";
+
+  // --- Elements
+  const video = document.getElementById('video');
+  const canvasComposite = document.getElementById('composite');
+  const ctxComposite = canvasComposite.getContext('2d');
+  const canvasDraw = document.getElementById('draw');
+  const ctxDraw = canvasDraw.getContext('2d');
+  const canvasGuide = document.getElementById('guide');
+  const ctxGuide = canvasGuide.getContext('2d');
+  const statusEl = document.getElementById('status');
+
+  // UI controls
+  const ui = {
+    startCam: document.getElementById('startCam'),
+    clear: document.getElementById('clear'),
+    undo: document.getElementById('undo'),
+    redo: document.getElementById('redo'),
+    brush: document.getElementById('brush'),
+    color: document.getElementById('color'),
+    size: document.getElementById('size'),
+    alpha: document.getElementById('alpha'),
+    speedScale: document.getElementById('speedScale'),
+    cursorPoint: document.getElementById('cursorPoint'),
+    gestureMode: document.getElementById('gestureMode'),
+    bgMode: document.getElementById('bgMode'),
+    bgColor: document.getElementById('bgColor'),
+    guideShape: document.getElementById('guideShape'),
+    guideSize: document.getElementById('guideSize'),
+    rec: document.getElementById('rec'),
+    snap: document.getElementById('snap'),
+    recordWithCamera: document.getElementById('recordWithCamera'),
+    smooth: document.getElementById('smooth'),
+    pinch: document.getElementById('pinch'),
+  };
+
+  // --- State
+  let handLandmarker;
+  let running = false;
+  let drawing = false; // active draw (pinch or Space)
+  let lastPt = null;
+  let smoothPt = null;
+  let lastT = 0;
+  let history = []; // undo stack: ImageData
+  let redoStack = [];
+  let mediaRecorder, recordedBlobs = [];
+  let showVideo = false;
+
+  // --- Utils
+  function resizeCanvases() {
+    const wrap = document.querySelector('.camWrap');
+    const w = wrap.clientWidth;
+    const h = wrap.clientHeight;
+    for (const c of [canvasComposite, canvasDraw, canvasGuide]) {
+      c.width = w; c.height = h;
+    }
+  }
+  window.addEventListener('resize', resizeCanvases);
+
+  function lerp(a,b,t){ return a + (b-a)*t; }
+
+  function getCursorFromLandmarks(landmarks) {
+    // Choose which landmark drives the brush
+    const points = {
+      index: 8, // index fingertip
+      thumb: 4, // thumb tip
+      wrist: 0  // wrist
+    };
+    const idx = points[ui.cursorPoint.value] ?? 8;
+    const lm = landmarks[idx];
+    // Landmarks are normalized [0..1]; map to canvas
+    const x = lm.x * canvasComposite.width;
+    const y = lm.y * canvasComposite.height;
+    const z = lm.z; // can use for effects if desired
+    return {x,y,z};
+  }
+
+  function pinchDistance(landmarks){
+    const a = landmarks[8]; // index tip
+    const b = landmarks[4]; // thumb tip
+    const dx = a.x - b.x, dy = a.y - b.y;
+    return Math.hypot(dx,dy);
+  }
+
+  function pushHistory() {
+    // limit history depth for memory
+    if (history.length > 40) history.shift();
+    history.push(ctxDraw.getImageData(0,0,canvasDraw.width, canvasDraw.height));
+    redoStack = [];
+  }
+  function undo() {
+    if (!history.length) return;
+    const img = history.pop();
+    const cur = ctxDraw.getImageData(0,0,canvasDraw.width, canvasDraw.height);
+    redoStack.push(cur);
+    ctxDraw.putImageData(img,0,0);
+  }
+  function redo() {
+    if (!redoStack.length) return;
+    const img = redoStack.pop();
+    pushHistory();
+    ctxDraw.putImageData(img,0,0);
+  }
+
+  // --- Guides
+  function drawGuide() {
+    const shape = ui.guideShape.value;
+    const s = +ui.guideSize.value;
+    ctxGuide.clearRect(0,0,canvasGuide.width,canvasGuide.height);
+    if (shape==='none') { canvasGuide.style.display='none'; return; }
+    canvasGuide.style.display='block';
+    const cx = canvasGuide.width/2, cy = canvasGuide.height/2;
+    ctxGuide.lineWidth = 3;
+    ctxGuide.strokeStyle = '#ffffff';
+    ctxGuide.beginPath();
+    if (shape==='circle') {
+      ctxGuide.arc(cx, cy, s/2, 0, Math.PI*2);
+    } else if (shape==='square') {
+      ctxGuide.rect(cx-s/2, cy-s/2, s, s);
+    } else if (shape==='star') {
+      const spikes = 5, outerR = s/2, innerR = s/4;
+      let rot = Math.PI/2 * 3;
+      let x = cx, y = cy;
+      ctxGuide.moveTo(cx, cy - outerR);
+      for (let i=0;i<spikes;i++){
+        x = cx + Math.cos(rot)*outerR; y = cy + Math.sin(rot)*outerR; ctxGuide.lineTo(x,y); rot += Math.PI/spikes;
+        x = cx + Math.cos(rot)*innerR; y = cy + Math.sin(rot)*innerR; ctxGuide.lineTo(x,y); rot += Math.PI/spikes;
+      }
+      ctxGuide.lineTo(cx, cy - outerR);
+    } else if (shape==='letterA') {
+      // simple block A
+      const w = s*0.6, h = s;
+      ctxGuide.moveTo(cx-w/2, cy+h/2);
+      ctxGuide.lineTo(cx, cy-h/2);
+      ctxGuide.lineTo(cx+w/2, cy+h/2);
+      ctxGuide.moveTo(cx-w*0.2, cy);
+      ctxGuide.lineTo(cx+w*0.2, cy);
+    }
+    ctxGuide.stroke();
+  }
+  ui.guideShape.addEventListener('change', drawGuide);
+  ui.guideSize.addEventListener('input', drawGuide);
+
+  // --- Background compositor
+  function drawCompositeFrame() {
+    const mode = ui.bgMode.value;
+    ctxComposite.clearRect(0,0,canvasComposite.width, canvasComposite.height);
+    if (mode === 'white') {
+      ctxComposite.fillStyle = '#ffffff';
+      ctxComposite.fillRect(0,0,canvasComposite.width, canvasComposite.height);
+      video.style.display = 'none';
+    } else if (mode === 'solid') {
+      ctxComposite.fillStyle = ui.bgColor.value;
+      ctxComposite.fillRect(0,0,canvasComposite.width, canvasComposite.height);
+      video.style.display = 'none';
+    } else if (mode === 'camera') {
+      // show the video element below canvases
+      video.style.display = 'block';
+      // nothing to draw on composite; video is visible
+    } else if (mode === 'transparent') {
+      // leave as transparent
+      video.style.display = 'none';
+      // do nothing
+    }
+  }
+  ui.bgMode.addEventListener('change', drawCompositeFrame);
+  ui.bgColor.addEventListener('input', drawCompositeFrame);
+
+  // --- Drawing engines
+  function drawStroke(prev, cur, speedPx) {
+    const baseSize = +ui.size.value;
+    const sScale = +ui.speedScale.value;
+    const size = Math.max(1, baseSize * (1 + sScale * Math.min(speedPx/120, 1.2)));
+
+    const color = ui.color.value;
+    const alpha = +ui.alpha.value;
+
+    const tool = ui.brush.value;
+    if (tool === 'pen') {
+      ctxDraw.lineCap = 'round';
+      ctxDraw.lineJoin = 'round';
+      ctxDraw.strokeStyle = color;
+      ctxDraw.globalAlpha = alpha;
+      ctxDraw.lineWidth = size;
+      ctxDraw.beginPath();
+      ctxDraw.moveTo(prev.x, prev.y);
+      ctxDraw.lineTo(cur.x, cur.y);
+      ctxDraw.stroke();
+      ctxDraw.globalAlpha = 1;
+    } else if (tool === 'calligraphy') {
+      // render as a rotated rectangle “nib” between points
+      const dx = cur.x - prev.x, dy = cur.y - prev.y;
+      const angle = Math.atan2(dy, dx) + Math.PI/6; // 30° nib angle
+      const w = size * 1.4, len = Math.hypot(dx,dy);
+      ctxDraw.save();
+      ctxDraw.translate(prev.x, prev.y);
+      ctxDraw.rotate(angle);
+      ctxDraw.fillStyle = color;
+      ctxDraw.globalAlpha = alpha*0.9;
+      ctxDraw.fillRect(0, -w/2, len, w);
+      ctxDraw.restore();
+      ctxDraw.globalAlpha = 1;
+    } else if (tool === 'spray') {
+      const density = Math.ceil(size * 1.2);
+      ctxDraw.fillStyle = color;
+      ctxDraw.globalAlpha = alpha*0.5;
+      for (let i=0;i<density;i++){
+        const r = Math.random()*size;
+        const a = Math.random()*Math.PI*2;
+        const x = cur.x + Math.cos(a)*r;
+        const y = cur.y + Math.sin(a)*r;
+        ctxDraw.fillRect(x, y, 1, 1);
+      }
+      ctxDraw.globalAlpha = 1;
+    } else if (tool === 'water') {
+      // soft round brush with slight jitter and glazing
+      ctxDraw.globalAlpha = alpha*0.25;
+      ctxDraw.fillStyle = color;
+      const steps = 6;
+      for (let i=0;i<steps;i++){
+        const t = i/(steps-1);
+        const x = lerp(prev.x, cur.x, t) + (Math.random()-0.5)*2;
+        const y = lerp(prev.y, cur.y, t) + (Math.random()-0.5)*2;
+        const r = size * (0.7 + Math.random()*0.6);
+        ctxDraw.beginPath();
+        ctxDraw.arc(x,y,r/2,0,Math.PI*2);
+        ctxDraw.fill();
+      }
+      ctxDraw.globalAlpha = 1;
+    } else if (tool === 'sparkle') {
+      ctxDraw.globalAlpha = alpha;
+      ctxDraw.fillStyle = color;
+      const n = 10 + Math.floor(size*0.8);
+      for (let i=0;i<n;i++){
+        const r = Math.random()*size*0.8;
+        const a = Math.random()*Math.PI*2;
+        const x = cur.x + Math.cos(a)*r;
+        const y = cur.y + Math.sin(a)*r;
+        ctxDraw.beginPath();
+        ctxDraw.arc(x,y, Math.random()*2+0.5, 0, Math.PI*2);
+        ctxDraw.fill();
+      }
+      // star burst line
+      ctxDraw.strokeStyle = color;
+      ctxDraw.globalAlpha = alpha*0.7;
+      ctxDraw.beginPath();
+      ctxDraw.moveTo(prev.x, prev.y);
+      ctxDraw.lineTo(cur.x, cur.y);
+      ctxDraw.lineWidth = Math.max(1, size*0.6);
+      ctxDraw.stroke();
+      ctxDraw.globalAlpha = 1;
+    }
+  }
+
+  // --- Recorder
+  function getRecordStream() {
+    // Choose whether to include camera (video element) in the capture.
+    // We’ll draw composite + draw into a "mix" canvas to record.
+    const mix = document.createElement('canvas');
+    mix.width = canvasComposite.width;
+    mix.height = canvasComposite.height;
+    const mixCtx = mix.getContext('2d');
+
+    function drawMix() {
+      mixCtx.clearRect(0,0,mix.width,mix.height);
+      // background
+      if (ui.recordWithCamera.value==='yes' && ui.bgMode.value==='camera' && showVideo) {
+        mixCtx.drawImage(video, 0,0, mix.width, mix.height);
+      } else {
+        // redraw same background as composite
+        const mode = ui.bgMode.value;
+        if (mode==='white'){ mixCtx.fillStyle='#fff'; mixCtx.fillRect(0,0,mix.width,mix.height);}
+        else if (mode==='solid'){ mixCtx.fillStyle=ui.bgColor.value; mixCtx.fillRect(0,0,mix.width,mix.height);}
+        // transparent results in black in recordings; that's okay for video
+      }
+      // strokes
+      mixCtx.drawImage(canvasDraw, 0,0);
+      requestAnimationFrame(drawMix);
+    }
+    drawMix();
+    return mix.captureStream(30);
+  }
+
+  function startRecording(){
+    if (mediaRecorder && mediaRecorder.state === 'recording') return;
+    recordedBlobs = [];
+    const stream = getRecordStream();
+    mediaRecorder = new MediaRecorder(stream, { mimeType: 'video/webm;codecs=vp9' });
+    mediaRecorder.ondataavailable = (e)=>{ if (e.data && e.data.size) recordedBlobs.push(e.data); };
+    mediaRecorder.onstop = ()=>{
+      const blob = new Blob(recordedBlobs, {type:'video/webm'});
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'air-painter.webm';
+      a.click();
+      URL.revokeObjectURL(url);
+    };
+    mediaRecorder.start();
+    ui.rec.textContent = 'Stop Recording';
+  }
+  function stopRecording(){
+    if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+      mediaRecorder.stop();
+      ui.rec.textContent = 'Start Recording';
+    }
+  }
+
+  // --- Camera + model
+  async function initModel() {
+    const fileset = await FilesetResolver.forVisionTasks(
+      "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm"
+    );
+    handLandmarker = await HandLandmarker.createFromOptions(fileset, {
+      baseOptions: {
+        modelAssetPath: "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task",
+      },
+      numHands: 1,
+      runningMode: "VIDEO",
+    });
+    statusEl.textContent = 'ready';
+  }
+
+  async function startCamera() {
+    const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' }, audio:false });
+    video.srcObject = stream;
+    await video.play();
+    showVideo = (ui.bgMode.value === 'camera');
+    video.style.display = showVideo ? 'block' : 'none';
+    resizeCanvases();
+    drawGuide();
+    drawCompositeFrame();
+    running = true;
+    requestAnimationFrame(loop);
+  }
+
+  // --- Main loop
+  async function loop(ts) {
+    if (!running) return;
+
+    drawCompositeFrame();
+
+    if (handLandmarker && video.readyState >= 2) {
+      const res = handLandmarker.detectForVideo(video, ts);
+      if (res && res.landmarks && res.landmarks[0]) {
+        const lm = res.landmarks[0];
+        const pinch = pinchDistance(lm); // normalized
+        const trigger = ui.gestureMode.value==='always' ? drawing : (pinch < +ui.pinch.value);
+        const cur = getCursorFromLandmarks(lm);
+
+        // smooth the pointer
+        const s = +ui.smooth.value;
+        if (!smoothPt) smoothPt = {...cur};
+        smoothPt.x = lerp(smoothPt.x, cur.x, 1 - s);
+        smoothPt.y = lerp(smoothPt.y, cur.y, 1 - s);
+
+        const now = performance.now();
+        const dt = (now - lastT) || 16;
+        const speed = lastPt ? Math.hypot(smoothPt.x-lastPt.x, smoothPt.y-lastPt.y) / (dt/16) : 0;
+
+        if (trigger) {
+          if (!lastPt) pushHistory();
+          if (lastPt) drawStroke(lastPt, smoothPt, speed);
+          lastPt = { ...smoothPt };
+        } else {
+          lastPt = null;
+        }
+
+        lastT = now;
+      } else {
+        lastPt = null;
+      }
+    }
+
+    requestAnimationFrame(loop);
+  }
+
+  // --- UI handlers
+  ui.startCam.addEventListener('click', async ()=>{
+    ui.startCam.disabled = true;
+    await startCamera();
+  });
+  ui.clear.addEventListener('click', ()=>{
+    ctxDraw.clearRect(0,0,canvasDraw.width, canvasDraw.height);
+    history = []; redoStack = [];
+  });
+  ui.undo.addEventListener('click', undo);
+  ui.redo.addEventListener('click', redo);
+
+  ui.rec.addEventListener('click', ()=>{
+    if (!mediaRecorder || mediaRecorder.state === 'inactive') startRecording();
+    else stopRecording();
+  });
+
+  ui.snap.addEventListener('click', ()=>{
+    // export PNG of strokes over chosen background
+    const out = document.createElement('canvas');
+    out.width = canvasComposite.width; out.height = canvasComposite.height;
+    const octx = out.getContext('2d');
+    const mode = ui.bgMode.value;
+    if (mode==='white'){ octx.fillStyle='#fff'; octx.fillRect(0,0,out.width,out.height); }
+    else if (mode==='solid'){ octx.fillStyle=ui.bgColor.value; octx.fillRect(0,0,out.width,out.height); }
+    // transparent = leave alpha
+    if (mode==='camera') {
+      // draw the current video frame if requested
+      octx.drawImage(video, 0,0,out.width,out.height);
+    }
+    octx.drawImage(canvasDraw, 0,0);
+    const url = out.toDataURL('image/png');
+    const a = document.createElement('a');
+    a.href = url; a.download = 'air-painter.png'; a.click();
+  });
+
+  // keyboard accessibility
+  window.addEventListener('keydown', (e)=>{
+    if (e.code==='Space') { e.preventDefault(); drawing = !drawing; }
+    if (e.key.toLowerCase()==='c') { ctxDraw.clearRect(0,0,canvasDraw.width, canvasDraw.height); history=[]; redoStack=[]; }
+    if (e.key.toLowerCase()==='z') undo();
+    if (e.key.toLowerCase()==='y') redo();
+    if (e.key.toLowerCase()==='h') { showVideo = !showVideo; video.style.display = (showVideo && ui.bgMode.value==='camera')?'block':'none'; }
+  });
+
+  // initialize
+  resizeCanvases();
+  drawGuide();
+  drawCompositeFrame();
+  initModel().catch(err=>{
+    console.error(err);
+    statusEl.textContent = 'model failed to load';
+  });
+</script>
+</body>
+</html>
+air-painter/
+ ├── index.html         (the file I gave you)
+ ├── manifest.json
+ ├── sw.js
+ └── icon-192.png       (your app icon, 192x192px)
+ └── icon-512.png       (your app icon, 512x512px)
+{
+  "name": "Air Painter",
+  "short_name": "Painter",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#0e0e11",
+  "theme_color": "#63b3ff",
+  "icons": [
+    {
+      "src": "icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}
+const CACHE_NAME = "air-painter-cache-v1";
+const ASSETS = [
+  "./",
+  "./index.html",
+  "./manifest.json",
+  "./icon-192.png",
+  "./icon-512.png"
+];
+
+self.addEventListener("install", e => {
+  e.waitUntil(
+    caches.open(CACHE_NAME).then(cache => cache.addAll(ASSETS))
+  );
+});
+
+self.addEventListener("fetch", e => {
+  e.respondWith(
+    caches.match(e.request).then(resp => resp || fetch(e.request))
+  );
+});
