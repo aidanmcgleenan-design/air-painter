@@ -6,15 +6,33 @@
   <title>Air Painter</title>
   <link rel="manifest" href="manifest.json">
   <meta name="theme-color" content="#63b3ff">
+
   <style>
-    body { margin:0; background:#0e0e11; overflow:hidden; }
-    video { display:none; }
-    canvas { display:block; margin:0 auto; background:white; }
+    body {
+      margin: 0;
+      background: #0e0e11;
+      overflow: hidden;
+    }
+    video {
+      display: none;
+    }
+    canvas {
+      display: block;
+      margin: 0 auto;
+      background: white;
+      touch-action: none; /* stop page from scrolling while drawing */
+    }
     button {
-      position: fixed; top: 10px; left: 10px;
-      z-index: 10; padding: 10px 20px;
-      background: #63b3ff; color: white;
-      border: none; border-radius: 5px; cursor: pointer;
+      position: fixed;
+      top: 10px;
+      left: 10px;
+      z-index: 10;
+      padding: 10px 20px;
+      background: #63b3ff;
+      color: white;
+      border: none;
+      border-radius: 5px;
+      cursor: pointer;
       font-size: 16px;
     }
   </style>
@@ -23,25 +41,33 @@
   <button id="startBtn">Start Camera</button>
   <video id="video" autoplay playsinline></video>
   <canvas id="canvas"></canvas>
+
+  <!-- TensorFlow + hand tracking model -->
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-core"></script>
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-converter"></script>
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-webgl"></script>
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/hand-pose-detection"></script>
+
   <script>
     const video = document.getElementById('video');
     const canvas = document.getElementById('canvas');
     const ctx = canvas.getContext('2d');
     const startBtn = document.getElementById('startBtn');
 
-    let model, prevX, prevY, drawing = false;
+    let model, prevX, prevY;
 
     canvas.width = window.innerWidth;
     canvas.height = window.innerHeight;
 
     async function initCamera() {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: true });
-      video.srcObject = stream;
-      await new Promise(r => video.onloadedmetadata = r);
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+        video.srcObject = stream;
+        await new Promise(r => video.onloadedmetadata = r);
+      } catch (err) {
+        alert("Camera access denied or unavailable.");
+        console.error(err);
+      }
     }
 
     async function init() {
@@ -54,6 +80,7 @@
     }
 
     async function render() {
+      if (!model) return;
       const hands = await model.estimateHands(video);
       if (hands.length > 0) {
         const indexTip = hands[0].keypoints.find(k => k.name === 'index_finger_tip');
@@ -66,6 +93,7 @@
             ctx.lineTo(x, y);
             ctx.strokeStyle = '#000';
             ctx.lineWidth = 3;
+            ctx.lineCap = "round";
             ctx.stroke();
           }
           prevX = x;
@@ -81,10 +109,10 @@
       startBtn.style.display = 'none';
       init();
     };
-  </script>
-  <script>
+
+    // Register service worker for PWA install
     if ("serviceWorker" in navigator) {
-      navigator.serviceWorker.register("sw.js");
+      navigator.serviceWorker.register("sw.js").catch(err => console.error("SW failed", err));
     }
   </script>
 </body>
