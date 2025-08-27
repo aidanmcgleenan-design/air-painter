@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Air Painter</title>
+  <link rel="manifest" href="manifest.json">
+  <meta name="theme-color" content="#63b3ff">
+  <style>
+    body { margin:0; background:#0e0e11; overflow:hidden; }
+    video { display:none; }
+    canvas { display:block; margin:0 auto; background:white; }
+    button {
+      position: fixed; top: 10px; left: 10px;
+      z-index: 10; padding: 10px 20px;
+      background: #63b3ff; color: white;
+      border: none; border-radius: 5px; cursor: pointer;
+      font-size: 16px;
+    }
+  </style>
+</head>
+<body>
+  <button id="startBtn">Start Camera</button>
+  <video id="video" autoplay playsinline></video>
+  <canvas id="canvas"></canvas>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-core"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-converter"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-webgl"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/hand-pose-detection"></script>
+  <script>
+    const video = document.getElementById('video');
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+    const startBtn = document.getElementById('startBtn');
+
+    let model, prevX, prevY, drawing = false;
+
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+
+    async function initCamera() {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+      video.srcObject = stream;
+      await new Promise(r => video.onloadedmetadata = r);
+    }
+
+    async function init() {
+      await initCamera();
+      model = await handPoseDetection.createDetector(
+        handPoseDetection.SupportedModels.MediaPipeHands,
+        { runtime: 'tfjs', modelType: 'lite' }
+      );
+      requestAnimationFrame(render);
+    }
+
+    async function render() {
+      const hands = await model.estimateHands(video);
+      if (hands.length > 0) {
+        const indexTip = hands[0].keypoints.find(k => k.name === 'index_finger_tip');
+        if (indexTip) {
+          const x = indexTip.x;
+          const y = indexTip.y;
+          if (prevX && prevY) {
+            ctx.beginPath();
+            ctx.moveTo(prevX, prevY);
+            ctx.lineTo(x, y);
+            ctx.strokeStyle = '#000';
+            ctx.lineWidth = 3;
+            ctx.stroke();
+          }
+          prevX = x;
+          prevY = y;
+        }
+      } else {
+        prevX = prevY = null;
+      }
+      requestAnimationFrame(render);
+    }
+
+    startBtn.onclick = () => {
+      startBtn.style.display = 'none';
+      init();
+    };
+  </script>
+  <script>
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.register("sw.js");
+    }
+  </script>
+</body>
+</html>
